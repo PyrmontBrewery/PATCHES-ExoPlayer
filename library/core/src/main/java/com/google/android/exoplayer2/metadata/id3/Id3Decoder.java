@@ -405,14 +405,9 @@ public final class Id3Decoder implements MetadataDecoder {
     int descriptionEndIndex = indexOfEos(data, 0, encoding);
     String description = new String(data, 0, descriptionEndIndex, charset);
 
-    String value;
     int valueStartIndex = descriptionEndIndex + delimiterLength(encoding);
-    if (valueStartIndex < data.length) {
-      int valueEndIndex = indexOfEos(data, valueStartIndex, encoding);
-      value = new String(data, valueStartIndex, valueEndIndex - valueStartIndex, charset);
-    } else {
-      value = "";
-    }
+    int valueEndIndex = indexOfEos(data, valueStartIndex, encoding);
+    String value = decodeStringIfValid(data, valueStartIndex, valueEndIndex, charset);
 
     return new TextInformationFrame("TXXX", description, value);
   }
@@ -452,14 +447,9 @@ public final class Id3Decoder implements MetadataDecoder {
     int descriptionEndIndex = indexOfEos(data, 0, encoding);
     String description = new String(data, 0, descriptionEndIndex, charset);
 
-    String url;
     int urlStartIndex = descriptionEndIndex + delimiterLength(encoding);
-    if (urlStartIndex < data.length) {
-      int urlEndIndex = indexOfZeroByte(data, urlStartIndex);
-      url = new String(data, urlStartIndex, urlEndIndex - urlStartIndex, "ISO-8859-1");
-    } else {
-      url = "";
-    }
+    int urlEndIndex = indexOfZeroByte(data, urlStartIndex);
+    String url = decodeStringIfValid(data, urlStartIndex, urlEndIndex, "ISO-8859-1");
 
     return new UrlLinkFrame("WXXX", description, url);
   }
@@ -483,13 +473,8 @@ public final class Id3Decoder implements MetadataDecoder {
     int ownerEndIndex = indexOfZeroByte(data, 0);
     String owner = new String(data, 0, ownerEndIndex, "ISO-8859-1");
 
-    byte[] privateData;
     int privateDataStartIndex = ownerEndIndex + 1;
-    if (privateDataStartIndex < data.length) {
-      privateData = Arrays.copyOfRange(data, privateDataStartIndex, data.length);
-    } else {
-      privateData = new byte[0];
-    }
+    byte[] privateData = copyOfRangeIfValid(data, privateDataStartIndex, data.length);
 
     return new PrivFrame(owner, privateData);
   }
@@ -507,16 +492,15 @@ public final class Id3Decoder implements MetadataDecoder {
 
     int filenameStartIndex = mimeTypeEndIndex + 1;
     int filenameEndIndex = indexOfEos(data, filenameStartIndex, encoding);
-    String filename = new String(data, filenameStartIndex, filenameEndIndex - filenameStartIndex,
-        charset);
+    String filename = decodeStringIfValid(data, filenameStartIndex, filenameEndIndex, charset);
 
     int descriptionStartIndex = filenameEndIndex + delimiterLength(encoding);
     int descriptionEndIndex = indexOfEos(data, descriptionStartIndex, encoding);
-    String description = new String(data, descriptionStartIndex,
-        descriptionEndIndex - descriptionStartIndex, charset);
+    String description =
+        decodeStringIfValid(data, descriptionStartIndex, descriptionEndIndex, charset);
 
     int objectDataStartIndex = descriptionEndIndex + delimiterLength(encoding);
-    byte[] objectData = Arrays.copyOfRange(data, objectDataStartIndex, data.length);
+    byte[] objectData = copyOfRangeIfValid(data, objectDataStartIndex, data.length);
 
     return new GeobFrame(mimeType, filename, description, objectData);
   }
@@ -553,7 +537,7 @@ public final class Id3Decoder implements MetadataDecoder {
         descriptionEndIndex - descriptionStartIndex, charset);
 
     int pictureDataStartIndex = descriptionEndIndex + delimiterLength(encoding);
-    byte[] pictureData = Arrays.copyOfRange(data, pictureDataStartIndex, data.length);
+    byte[] pictureData = copyOfRangeIfValid(data, pictureDataStartIndex, data.length);
 
     return new ApicFrame(mimeType, description, pictureType, pictureData);
   }
@@ -578,14 +562,9 @@ public final class Id3Decoder implements MetadataDecoder {
     int descriptionEndIndex = indexOfEos(data, 0, encoding);
     String description = new String(data, 0, descriptionEndIndex, charset);
 
-    String text;
     int textStartIndex = descriptionEndIndex + delimiterLength(encoding);
-    if (textStartIndex < data.length) {
-      int textEndIndex = indexOfEos(data, textStartIndex, encoding);
-      text = new String(data, textStartIndex, textEndIndex - textStartIndex, charset);
-    } else {
-      text = "";
-    }
+    int textEndIndex = indexOfEos(data, textStartIndex, encoding);
+    String text = decodeStringIfValid(data, textStartIndex, textEndIndex, charset);
 
     return new CommentFrame(language, description, text);
   }
@@ -747,6 +726,41 @@ public final class Id3Decoder implements MetadataDecoder {
   private static int delimiterLength(int encodingByte) {
     return (encodingByte == ID3_TEXT_ENCODING_ISO_8859_1 || encodingByte == ID3_TEXT_ENCODING_UTF_8)
         ? 1 : 2;
+  }
+
+  /**
+   * Copies the specified range of an array, or returns a zero length array if the range is invalid.
+   *
+   * @param data The array from which to copy.
+   * @param from The start of the range to copy (inclusive).
+   * @param to The end of the range to copy (exclusive).
+   * @return The copied data, or a zero length array if the range is invalid.
+   */
+  private static byte[] copyOfRangeIfValid(byte[] data, int from, int to) {
+    if (to <= from) {
+      // Invalid or zero length range.
+      return new byte[0];
+    }
+    return Arrays.copyOfRange(data, from, to);
+  }
+
+  /**
+   * Returns a string obtained by decoding the specified range of {@code data} using the specified
+   * {@code charsetName}. An empty string is returned if the range is invalid.
+   *
+   * @param data The array from which to decode the string.
+   * @param from The start of the range.
+   * @param to The end of the range (exclusive).
+   * @param charsetName The name of the Charset to use.
+   * @return The decoded string, or an empty string if the range is invalid.
+   * @throws UnsupportedEncodingException If the Charset is not supported.
+   */
+  private static String decodeStringIfValid(byte[] data, int from, int to, String charsetName)
+      throws UnsupportedEncodingException {
+    if (to <= from || to > data.length) {
+      return "";
+    }
+    return new String(data, from, to - from, charsetName);
   }
 
   private static final class Id3Header {

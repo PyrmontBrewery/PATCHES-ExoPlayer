@@ -32,9 +32,10 @@ import android.view.Display;
 import android.view.WindowManager;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlayerLibraryInfo;
+import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.ParserException;
+import com.google.android.exoplayer2.SeekParameters;
 import com.google.android.exoplayer2.upstream.DataSource;
-import com.google.android.exoplayer2.upstream.DataSpec;
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.File;
@@ -50,7 +51,9 @@ import java.util.Formatter;
 import java.util.GregorianCalendar;
 import java.util.List;
 import java.util.Locale;
+import java.util.MissingResourceException;
 import java.util.TimeZone;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
@@ -98,7 +101,7 @@ public final class Util {
   private static final Pattern XS_DATE_TIME_PATTERN = Pattern.compile(
       "(\\d\\d\\d\\d)\\-(\\d\\d)\\-(\\d\\d)[Tt]"
       + "(\\d\\d):(\\d\\d):(\\d\\d)([\\.,](\\d+))?"
-      + "([Zz]|((\\+|\\-)(\\d\\d):?(\\d\\d)))?");
+      + "([Zz]|((\\+|\\-)(\\d?\\d):?(\\d\\d)))?");
   private static final Pattern XS_DURATION_PATTERN =
       Pattern.compile("^(-)?P(([0-9]*)Y)?(([0-9]*)M)?(([0-9]*)D)?"
           + "(T(([0-9]*)H)?(([0-9]*)M)?(([0-9.]*)S)?)?$");
@@ -192,6 +195,17 @@ public final class Util {
   }
 
   /**
+   * Removes an indexed range from a List.
+   *
+   * @param list The List to remove the range from.
+   * @param fromIndex The first index to be removed (inclusive).
+   * @param toIndex The last index to be removed (exclusive).
+   */
+  public static <T> void removeRange(List<T> list, int fromIndex, int toIndex) {
+    list.subList(fromIndex, toIndex).clear();
+  }
+
+  /**
    * Instantiates a new single threaded executor whose thread has the specified name.
    *
    * @param threadName The name of the thread.
@@ -238,13 +252,28 @@ public final class Util {
   }
 
   /**
-   * Returns a normalized RFC 5646 language code.
+   * Returns a normalized RFC 639-2/T code for {@code language}.
    *
-   * @param language A possibly non-normalized RFC 5646 language code.
-   * @return The normalized code, or null if the input was null.
+   * @param language A case-insensitive ISO 639 alpha-2 or alpha-3 language code.
+   * @return The all-lowercase normalized code, or null if the input was null, or
+   *     {@code language.toLowerCase()} if the language could not be normalized.
    */
   public static String normalizeLanguageCode(String language) {
-    return language == null ? null : new Locale(language).getLanguage();
+    try {
+      return language == null ? null : new Locale(language).getISO3Language();
+    } catch (MissingResourceException e) {
+      return toLowerInvariant(language);
+    }
+  }
+
+  /**
+   * Returns a new {@link String} constructed by decoding UTF-8 encoded bytes.
+   *
+   * @param bytes The UTF-8 encoded bytes to decode.
+   * @return The string.
+   */
+  public static String fromUtf8Bytes(byte[] bytes) {
+    return new String(bytes, Charset.forName(C.UTF8_NAME));
   }
 
   /**
@@ -254,7 +283,7 @@ public final class Util {
    * @return The code points encoding using UTF-8.
    */
   public static byte[] getUtf8Bytes(String value) {
-    return value.getBytes(Charset.defaultCharset()); // UTF-8 is the default on Android.
+    return value.getBytes(Charset.forName(C.UTF8_NAME));
   }
 
   /**
@@ -275,6 +304,16 @@ public final class Util {
    */
   public static String toLowerInvariant(String text) {
     return text == null ? null : text.toLowerCase(Locale.US);
+  }
+
+  /**
+   * Converts text to upper case using {@link Locale#US}.
+   *
+   * @param text The text to convert.
+   * @return The upper case text, or null if {@code text} is null.
+   */
+  public static String toUpperInvariant(String text) {
+    return text == null ? null : text.toUpperCase(Locale.US);
   }
 
   /**
@@ -333,6 +372,40 @@ public final class Util {
    */
   public static float constrainValue(float value, float min, float max) {
     return Math.max(min, Math.min(value, max));
+  }
+
+  /**
+   * Returns the sum of two arguments, or a third argument if the result overflows.
+   *
+   * @param x The first value.
+   * @param y The second value.
+   * @param overflowResult The return value if {@code x + y} overflows.
+   * @return {@code x + y}, or {@code overflowResult} if the result overflows.
+   */
+  public static long addWithOverflowDefault(long x, long y, long overflowResult) {
+    long result = x + y;
+    // See Hacker's Delight 2-13 (H. Warren Jr).
+    if (((x ^ result) & (y ^ result)) < 0) {
+      return overflowResult;
+    }
+    return result;
+  }
+
+  /**
+   * Returns the difference between two arguments, or a third argument if the result overflows.
+   *
+   * @param x The first value.
+   * @param y The second value.
+   * @param overflowResult The return value if {@code x - y} overflows.
+   * @return {@code x - y}, or {@code overflowResult} if the result overflows.
+   */
+  public static long subtractWithOverflowDefault(long x, long y, long overflowResult) {
+    long result = x - y;
+    // See Hacker's Delight 2-13 (H. Warren Jr).
+    if (((x ^ y) & (x ^ result)) < 0) {
+      return overflowResult;
+    }
+    return result;
   }
 
   /**
@@ -400,39 +473,6 @@ public final class Util {
   }
 
   /**
-   * Returns the index of the smallest element in {@code array} that is greater than (or optionally
-   * equal to) a specified {@code value}.
-   * <p>
-   * The search is performed using a binary search algorithm, so the array must be sorted. If
-   * the array contains multiple elements equal to {@code value} and {@code inclusive} is true, the
-   * index of the last one will be returned.
-   *
-   * @param array The array to search.
-   * @param value The value being searched for.
-   * @param inclusive If the value is present in the array, whether to return the corresponding
-   *     index. If false then the returned index corresponds to the smallest element strictly
-   *     greater than the value.
-   * @param stayInBounds If true, then {@code (a.length - 1)} will be returned in the case that the
-   *     value is greater than the largest element in the array. If false then {@code a.length} will
-   *     be returned.
-   * @return The index of the smallest element in {@code array} that is greater than (or optionally
-   *     equal to) {@code value}.
-   */
-  public static int binarySearchCeil(long[] array, long value, boolean inclusive,
-      boolean stayInBounds) {
-    int index = Arrays.binarySearch(array, value);
-    if (index < 0) {
-      index = ~index;
-    } else {
-      while ((++index) < array.length && array[index] == value) {}
-      if (inclusive) {
-        index--;
-      }
-    }
-    return stayInBounds ? Math.min(array.length - 1, index) : index;
-  }
-
-  /**
    * Returns the index of the largest element in {@code list} that is less than (or optionally equal
    * to) a specified {@code value}.
    * <p>
@@ -463,6 +503,39 @@ public final class Util {
       }
     }
     return stayInBounds ? Math.max(0, index) : index;
+  }
+
+  /**
+   * Returns the index of the smallest element in {@code array} that is greater than (or optionally
+   * equal to) a specified {@code value}.
+   *
+   * <p>The search is performed using a binary search algorithm, so the array must be sorted. If the
+   * array contains multiple elements equal to {@code value} and {@code inclusive} is true, the
+   * index of the last one will be returned.
+   *
+   * @param array The array to search.
+   * @param value The value being searched for.
+   * @param inclusive If the value is present in the array, whether to return the corresponding
+   *     index. If false then the returned index corresponds to the smallest element strictly
+   *     greater than the value.
+   * @param stayInBounds If true, then {@code (a.length - 1)} will be returned in the case that the
+   *     value is greater than the largest element in the array. If false then {@code a.length} will
+   *     be returned.
+   * @return The index of the smallest element in {@code array} that is greater than (or optionally
+   *     equal to) {@code value}.
+   */
+  public static int binarySearchCeil(
+      long[] array, long value, boolean inclusive, boolean stayInBounds) {
+    int index = Arrays.binarySearch(array, value);
+    if (index < 0) {
+      index = ~index;
+    } else {
+      while ((++index) < array.length && array[index] == value) {}
+      if (inclusive) {
+        index--;
+      }
+    }
+    return stayInBounds ? Math.min(array.length - 1, index) : index;
   }
 
   /**
@@ -498,6 +571,18 @@ public final class Util {
       }
     }
     return stayInBounds ? Math.min(list.size() - 1, index) : index;
+  }
+
+  /**
+   * Compares two long values and returns the same value as {@code Long.compare(long, long)}.
+   *
+   * @param left The left operand.
+   * @param right The right operand.
+   * @return 0, if left == right, a negative value if left &lt; right, or a positive value if left
+   *     &gt; right.
+   */
+  public static int compareLong(long left, long right) {
+    return left < right ? -1 : left == right ? 0 : 1;
   }
 
   /**
@@ -663,6 +748,71 @@ public final class Util {
   }
 
   /**
+   * Returns the duration of media that will elapse in {@code playoutDuration}.
+   *
+   * @param playoutDuration The duration to scale.
+   * @param speed The playback speed.
+   * @return The scaled duration, in the same units as {@code playoutDuration}.
+   */
+  public static long getMediaDurationForPlayoutDuration(long playoutDuration, float speed) {
+    if (speed == 1f) {
+      return playoutDuration;
+    }
+    return Math.round((double) playoutDuration * speed);
+  }
+
+  /**
+   * Returns the playout duration of {@code mediaDuration} of media.
+   *
+   * @param mediaDuration The duration to scale.
+   * @return The scaled duration, in the same units as {@code mediaDuration}.
+   */
+  public static long getPlayoutDurationForMediaDuration(long mediaDuration, float speed) {
+    if (speed == 1f) {
+      return mediaDuration;
+    }
+    return Math.round((double) mediaDuration / speed);
+  }
+
+  /**
+   * Resolves a seek given the requested seek position, a {@link SeekParameters} and two candidate
+   * sync points.
+   *
+   * @param positionUs The requested seek position, in microseocnds.
+   * @param seekParameters The {@link SeekParameters}.
+   * @param firstSyncUs The first candidate seek point, in micrseconds.
+   * @param secondSyncUs The second candidate seek point, in microseconds. May equal {@code
+   *     firstSyncUs} if there's only one candidate.
+   * @return The resolved seek position, in microseconds.
+   */
+  public static long resolveSeekPositionUs(
+      long positionUs, SeekParameters seekParameters, long firstSyncUs, long secondSyncUs) {
+    if (SeekParameters.EXACT.equals(seekParameters)) {
+      return positionUs;
+    }
+    long minPositionUs =
+        subtractWithOverflowDefault(positionUs, seekParameters.toleranceBeforeUs, Long.MIN_VALUE);
+    long maxPositionUs =
+        addWithOverflowDefault(positionUs, seekParameters.toleranceAfterUs, Long.MAX_VALUE);
+    boolean firstSyncPositionValid = minPositionUs <= firstSyncUs && firstSyncUs <= maxPositionUs;
+    boolean secondSyncPositionValid =
+        minPositionUs <= secondSyncUs && secondSyncUs <= maxPositionUs;
+    if (firstSyncPositionValid && secondSyncPositionValid) {
+      if (Math.abs(firstSyncUs - positionUs) <= Math.abs(secondSyncUs - positionUs)) {
+        return firstSyncUs;
+      } else {
+        return secondSyncUs;
+      }
+    } else if (firstSyncPositionValid) {
+      return firstSyncUs;
+    } else if (secondSyncPositionValid) {
+      return secondSyncUs;
+    } else {
+      return minPositionUs;
+    }
+  }
+
+  /**
    * Converts a list of integers to a primitive array.
    *
    * @param list A list of integers.
@@ -678,25 +828,6 @@ public final class Util {
       intArray[i] = list.get(i);
     }
     return intArray;
-  }
-
-  /**
-   * Given a {@link DataSpec} and a number of bytes already loaded, returns a {@link DataSpec}
-   * that represents the remainder of the data.
-   *
-   * @param dataSpec The original {@link DataSpec}.
-   * @param bytesLoaded The number of bytes already loaded.
-   * @return A {@link DataSpec} that represents the remainder of the data.
-   */
-  public static DataSpec getRemainderDataSpec(DataSpec dataSpec, int bytesLoaded) {
-    if (bytesLoaded == 0) {
-      return dataSpec;
-    } else {
-      long remainingLength = dataSpec.length == C.LENGTH_UNSET ? C.LENGTH_UNSET
-          : dataSpec.length - bytesLoaded;
-      return new DataSpec(dataSpec.uri, dataSpec.position + bytesLoaded, remainingLength,
-          dataSpec.key, dataSpec.flags);
-    }
   }
 
   /**
@@ -770,6 +901,32 @@ public final class Util {
   }
 
   /**
+   * Returns a copy of {@code codecs} without the codecs whose track type doesn't match
+   * {@code trackType}.
+   *
+   * @param codecs A codec sequence string, as defined in RFC 6381.
+   * @param trackType One of {@link C}{@code .TRACK_TYPE_*}.
+   * @return A copy of {@code codecs} without the codecs whose track type doesn't match
+   *     {@code trackType}.
+   */
+  public static String getCodecsOfType(String codecs, int trackType) {
+    if (TextUtils.isEmpty(codecs)) {
+      return null;
+    }
+    String[] codecArray = codecs.trim().split("(\\s*,\\s*)");
+    StringBuilder builder = new StringBuilder();
+    for (String codec : codecArray) {
+      if (trackType == MimeTypes.getTrackTypeOfCodec(codec)) {
+        if (builder.length() > 0) {
+          builder.append(",");
+        }
+        builder.append(codec);
+      }
+    }
+    return builder.length() > 0 ? builder.toString() : null;
+  }
+
+  /**
    * Converts a sample bit depth to a corresponding PCM encoding constant.
    *
    * @param bitDepth The bit depth. Supported values are 8, 16, 24 and 32.
@@ -795,6 +952,16 @@ public final class Util {
   }
 
   /**
+   * Returns whether {@code encoding} is high resolution (&gt; 16-bit) integer PCM.
+   *
+   * @param encoding The encoding of the audio data.
+   * @return Whether the encoding is high resolution integer PCM.
+   */
+  public static boolean isEncodingHighResolutionIntegerPcm(@C.PcmEncoding int encoding) {
+    return encoding == C.ENCODING_PCM_24BIT || encoding == C.ENCODING_PCM_32BIT;
+  }
+
+  /**
    * Returns the frame size for audio with {@code channelCount} channels in the specified encoding.
    *
    * @param pcmEncoding The encoding of the audio data.
@@ -810,9 +977,115 @@ public final class Util {
       case C.ENCODING_PCM_24BIT:
         return channelCount * 3;
       case C.ENCODING_PCM_32BIT:
+      case C.ENCODING_PCM_FLOAT:
         return channelCount * 4;
+      case C.ENCODING_INVALID:
+      case Format.NO_VALUE:
       default:
         throw new IllegalArgumentException();
+    }
+  }
+
+  /**
+   * Returns the {@link C.AudioUsage} corresponding to the specified {@link C.StreamType}.
+   */
+  @C.AudioUsage
+  public static int getAudioUsageForStreamType(@C.StreamType int streamType) {
+    switch (streamType) {
+      case C.STREAM_TYPE_ALARM:
+        return C.USAGE_ALARM;
+      case C.STREAM_TYPE_DTMF:
+        return C.USAGE_VOICE_COMMUNICATION_SIGNALLING;
+      case C.STREAM_TYPE_NOTIFICATION:
+        return C.USAGE_NOTIFICATION;
+      case C.STREAM_TYPE_RING:
+        return C.USAGE_NOTIFICATION_RINGTONE;
+      case C.STREAM_TYPE_SYSTEM:
+        return C.USAGE_ASSISTANCE_SONIFICATION;
+      case C.STREAM_TYPE_VOICE_CALL:
+        return C.USAGE_VOICE_COMMUNICATION;
+      case C.STREAM_TYPE_USE_DEFAULT:
+      case C.STREAM_TYPE_MUSIC:
+      default:
+        return C.USAGE_MEDIA;
+    }
+  }
+
+  /**
+   * Returns the {@link C.AudioContentType} corresponding to the specified {@link C.StreamType}.
+   */
+  @C.AudioContentType
+  public static int getAudioContentTypeForStreamType(@C.StreamType int streamType) {
+    switch (streamType) {
+      case C.STREAM_TYPE_ALARM:
+      case C.STREAM_TYPE_DTMF:
+      case C.STREAM_TYPE_NOTIFICATION:
+      case C.STREAM_TYPE_RING:
+      case C.STREAM_TYPE_SYSTEM:
+        return C.CONTENT_TYPE_SONIFICATION;
+      case C.STREAM_TYPE_VOICE_CALL:
+        return C.CONTENT_TYPE_SPEECH;
+      case C.STREAM_TYPE_USE_DEFAULT:
+      case C.STREAM_TYPE_MUSIC:
+      default:
+        return C.CONTENT_TYPE_MUSIC;
+    }
+  }
+
+  /**
+   * Returns the {@link C.StreamType} corresponding to the specified {@link C.AudioUsage}.
+   */
+  @C.StreamType
+  public static int getStreamTypeForAudioUsage(@C.AudioUsage int usage) {
+    switch (usage) {
+      case C.USAGE_MEDIA:
+      case C.USAGE_GAME:
+      case C.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE:
+        return C.STREAM_TYPE_MUSIC;
+      case C.USAGE_ASSISTANCE_SONIFICATION:
+        return C.STREAM_TYPE_SYSTEM;
+      case C.USAGE_VOICE_COMMUNICATION:
+        return C.STREAM_TYPE_VOICE_CALL;
+      case C.USAGE_VOICE_COMMUNICATION_SIGNALLING:
+        return C.STREAM_TYPE_DTMF;
+      case C.USAGE_ALARM:
+        return C.STREAM_TYPE_ALARM;
+      case C.USAGE_NOTIFICATION_RINGTONE:
+        return C.STREAM_TYPE_RING;
+      case C.USAGE_NOTIFICATION:
+      case C.USAGE_NOTIFICATION_COMMUNICATION_REQUEST:
+      case C.USAGE_NOTIFICATION_COMMUNICATION_INSTANT:
+      case C.USAGE_NOTIFICATION_COMMUNICATION_DELAYED:
+      case C.USAGE_NOTIFICATION_EVENT:
+        return C.STREAM_TYPE_NOTIFICATION;
+      case C.USAGE_ASSISTANCE_ACCESSIBILITY:
+      case C.USAGE_UNKNOWN:
+      default:
+        return C.STREAM_TYPE_DEFAULT;
+    }
+  }
+
+  /**
+   * Derives a DRM {@link UUID} from {@code drmScheme}.
+   *
+   * @param drmScheme A UUID string, or {@code "widevine"}, {@code "playready"} or {@code
+   *     "clearkey"}.
+   * @return The derived {@link UUID}, or {@code null} if one could not be derived.
+   */
+  public static UUID getDrmUuid(String drmScheme) {
+    switch (Util.toLowerInvariant(drmScheme)) {
+      case "widevine":
+        return C.WIDEVINE_UUID;
+      case "playready":
+        return C.PLAYREADY_UUID;
+      case "clearkey":
+        return C.CLEARKEY_UUID;
+      default:
+        try {
+          return UUID.fromString(drmScheme);
+        } catch (RuntimeException e) {
+          return null;
+        }
     }
   }
 
@@ -836,13 +1109,12 @@ public final class Util {
    */
   @C.ContentType
   public static int inferContentType(String fileName) {
-    fileName = fileName.toLowerCase();
+    fileName = Util.toLowerInvariant(fileName);
     if (fileName.endsWith(".mpd")) {
       return C.TYPE_DASH;
     } else if (fileName.endsWith(".m3u8")) {
       return C.TYPE_HLS;
-    } else if (fileName.endsWith(".ism") || fileName.endsWith(".isml")
-        || fileName.endsWith(".ism/manifest") || fileName.endsWith(".isml/manifest")) {
+    } else if (fileName.matches(".*\\.ism(l)?(/manifest(\\(.+\\))?)?")) {
       return C.TYPE_SS;
     } else {
       return C.TYPE_OTHER;
@@ -977,15 +1249,15 @@ public final class Util {
     int expectedLength = length - percentCharacterCount * 2;
     StringBuilder builder = new StringBuilder(expectedLength);
     Matcher matcher = ESCAPED_CHARACTER_PATTERN.matcher(fileName);
-    int endOfLastMatch = 0;
+    int startOfNotEscaped = 0;
     while (percentCharacterCount > 0 && matcher.find()) {
       char unescapedCharacter = (char) Integer.parseInt(matcher.group(1), 16);
-      builder.append(fileName, endOfLastMatch, matcher.start()).append(unescapedCharacter);
-      endOfLastMatch = matcher.end();
+      builder.append(fileName, startOfNotEscaped, matcher.start()).append(unescapedCharacter);
+      startOfNotEscaped = matcher.end();
       percentCharacterCount--;
     }
-    if (endOfLastMatch < length) {
-      builder.append(fileName, endOfLastMatch, length);
+    if (startOfNotEscaped < length) {
+      builder.append(fileName, startOfNotEscaped, length);
     }
     if (builder.length() != expectedLength) {
       return null;
@@ -1018,10 +1290,15 @@ public final class Util {
 
   /** Creates an empty directory in the directory returned by {@link Context#getCacheDir()}. */
   public static File createTempDirectory(Context context, String prefix) throws IOException {
-    File tempFile = File.createTempFile(prefix, null, context.getCacheDir());
+    File tempFile = createTempFile(context, prefix);
     tempFile.delete(); // Delete the temp file.
     tempFile.mkdir(); // Create a directory with the same name.
     return tempFile;
+  }
+
+  /** Creates a new empty file in the directory returned by {@link Context#getCacheDir()}. */
+  public static File createTempFile(Context context, String prefix) throws IOException {
+    return File.createTempFile(prefix, null, context.getCacheDir());
   }
 
   /**
@@ -1067,7 +1344,11 @@ public final class Util {
       if ("Sony".equals(Util.MANUFACTURER) && Util.MODEL.startsWith("BRAVIA")
           && context.getPackageManager().hasSystemFeature("com.sony.dtv.hardware.panel.qfhd")) {
         return new Point(3840, 2160);
-      } else if ("NVIDIA".equals(Util.MANUFACTURER) && Util.MODEL.contains("SHIELD")) {
+      } else if (("NVIDIA".equals(Util.MANUFACTURER) && Util.MODEL.contains("SHIELD"))
+          || ("philips".equals(Util.toLowerInvariant(Util.MANUFACTURER))
+              && (Util.MODEL.startsWith("QM1")
+                  || Util.MODEL.equals("QV151E")
+                  || Util.MODEL.equals("TPM171E")))) {
         // Attempt to read sys.display-size.
         String sysDisplaySize = null;
         try {

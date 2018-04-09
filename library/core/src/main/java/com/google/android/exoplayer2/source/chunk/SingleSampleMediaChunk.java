@@ -50,9 +50,17 @@ public final class SingleSampleMediaChunk extends BaseMediaChunk {
    *     constants.
    * @param sampleFormat The {@link Format} of the sample in the chunk.
    */
-  public SingleSampleMediaChunk(DataSource dataSource, DataSpec dataSpec, Format trackFormat,
-      int trackSelectionReason, Object trackSelectionData, long startTimeUs, long endTimeUs,
-      int chunkIndex, int trackType, Format sampleFormat) {
+  public SingleSampleMediaChunk(
+      DataSource dataSource,
+      DataSpec dataSpec,
+      Format trackFormat,
+      int trackSelectionReason,
+      Object trackSelectionData,
+      long startTimeUs,
+      long endTimeUs,
+      long chunkIndex,
+      int trackType,
+      Format sampleFormat) {
     super(dataSource, dataSpec, trackFormat, trackSelectionReason, trackSelectionData, startTimeUs,
         endTimeUs, chunkIndex);
     this.trackType = trackType;
@@ -85,7 +93,7 @@ public final class SingleSampleMediaChunk extends BaseMediaChunk {
   @SuppressWarnings("NonAtomicVolatileUpdate")
   @Override
   public void load() throws IOException, InterruptedException {
-    DataSpec loadDataSpec = Util.getRemainderDataSpec(dataSpec, bytesLoaded);
+    DataSpec loadDataSpec = dataSpec.subrange(bytesLoaded);
     try {
       // Create and open the input.
       long length = dataSource.open(loadDataSpec);
