@@ -1421,11 +1421,14 @@ import java.util.Collections;
       return;
     }
 
+    // Issue #4185: If end of Period is reached then this triggers next Period also
+    boolean isAtEndOfPeriod = (rendererPositionUs >= playingPeriodHolder.next.rendererPositionOffsetUs);
+
     for (int i = 0; i < renderers.length; i++) {
       Renderer renderer = renderers[i];
       SampleStream sampleStream = readingPeriodHolder.sampleStreams[i];
       if (renderer.getStream() != sampleStream
-          || (sampleStream != null && !renderer.hasReadStreamToEnd())) {
+          || (sampleStream != null && !renderer.hasReadStreamToEnd() && !isAtEndOfPeriod)) {
         // The current reading period is still being read by at least one renderer.
         return;
       }
