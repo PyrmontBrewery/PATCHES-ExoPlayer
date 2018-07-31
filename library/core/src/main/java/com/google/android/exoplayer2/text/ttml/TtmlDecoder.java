@@ -246,7 +246,12 @@ public final class TtmlDecoder extends SimpleSubtitleDecoder {
           globalStyles.put(style.getId(), style);
         }
       } else if (XmlPullParserUtil.isStartTag(xmlParser, TtmlNode.TAG_REGION)) {
-        TtmlRegion ttmlRegion = parseRegionAttributes(xmlParser, cellResolution);
+        String styleId = XmlPullParserUtil.getAttributeValue(xmlParser, ATTR_STYLE);
+        TtmlStyle style = null;
+        if (styleId != null) {
+          style = globalStyles.get(styleId);
+        }
+        TtmlRegion ttmlRegion = parseRegionAttributes(xmlParser, cellResolution, style);
         if (ttmlRegion != null) {
           globalRegions.put(ttmlRegion.id, ttmlRegion);
         }
@@ -262,7 +267,7 @@ public final class TtmlDecoder extends SimpleSubtitleDecoder {
    * percentages of the viewport. Region declarations that define origin and extent in other formats
    * are unsupported, and null is returned.
    */
-  private TtmlRegion parseRegionAttributes(XmlPullParser xmlParser, CellResolution cellResolution) {
+  private TtmlRegion parseRegionAttributes(XmlPullParser xmlParser, CellResolution cellResolution, TtmlStyle style) {
     String regionId = XmlPullParserUtil.getAttributeValue(xmlParser, TtmlNode.ATTR_ID);
     if (regionId == null) {
       return null;
@@ -325,6 +330,9 @@ public final class TtmlDecoder extends SimpleSubtitleDecoder {
     @Cue.AnchorType int lineAnchor = Cue.ANCHOR_TYPE_START;
     String displayAlign = XmlPullParserUtil.getAttributeValue(xmlParser,
         TtmlNode.ATTR_TTS_DISPLAY_ALIGN);
+    if (displayAlign == null && style != null) {
+      displayAlign = style.getDisplayAlign();
+    }
     if (displayAlign != null) {
       switch (Util.toLowerInvariant(displayAlign)) {
         case "center":
@@ -437,6 +445,9 @@ public final class TtmlDecoder extends SimpleSubtitleDecoder {
               style = createIfNull(style).setUnderline(false);
               break;
           }
+          break;
+        case TtmlNode.ATTR_TTS_DISPLAY_ALIGN:
+          style = createIfNull(style).setDisplayAlign(attributeValue);
           break;
         default:
           // ignore

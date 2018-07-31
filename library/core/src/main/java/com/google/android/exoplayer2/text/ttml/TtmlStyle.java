@@ -65,6 +65,7 @@ import java.lang.annotation.RetentionPolicy;
   private String id;
   private TtmlStyle inheritableStyle;
   private Layout.Alignment textAlign;
+  private String displayAlign;
 
   public TtmlStyle() {
     linethrough = UNSPECIFIED;
@@ -257,4 +258,12 @@ import java.lang.annotation.RetentionPolicy;
     return fontSize;
   }
 
+  public TtmlStyle setDisplayAlign(String displayAlign) {
+    this.displayAlign = displayAlign;
+    return this;
+  }
+
+  public String getDisplayAlign() {
+    return displayAlign;
+  }
 }
